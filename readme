@@ -1,0 +1,73 @@
+# Packing Checker – Centralized Duplicate Tag Scanning System
+
+## Overview
+
+Packing Checker is a centralized internal web application used to validate scanned MAC / tag codes across multiple scan stations. So we can have 1 computer be the centralized database and multiple scanners writing and reading from that singular database. 
+
+The application prevents duplicate tags by checking scanned values against:
+
+1. A **master CSV file** containing known existing / blocked tags  
+2. A **live SQL database** containing all accepted scans during the current operation
+
+This ensures that if one worker scans a tag successfully, another worker scanning the same tag later will be immediately flagged even if that tag does not exist in the master csv file.
+
+So let's say that worker 1 scans tag with 12345. 1 hour later, another worker scans a tag with 12345 in another box. Even if 12345 doesn't exist in the master csv file, we will validate that every scanned mac id is unique. 
+
+---
+
+## Business Use Case
+
+This system is intended for high-volume warehouse / packing / inventory operations where multiple workers scan labels simultaneously.
+
+Example:
+
+- 10 workers scanning tags
+- 130,000 labels to process
+- Need real-time duplicate prevention
+- Need centralized logging and accountability
+
+---
+
+## Core Problem Solved
+
+Without a centralized system:
+
+- Workers may use stale Excel files
+- Duplicate tags may slip through
+- No visibility into who scanned what
+- Manual reconciliation required later
+
+With Packing Checker:
+
+- One central source of truth
+- Real-time duplicate detection
+- Full scan history
+- Faster operations
+
+---
+
+## System Architecture
+
+```text
++-------------------+
+| Master CSV File   |
+| packingMac44.csv  |
++-------------------+
+          |
+          v
+ Loads into memory on app start
+
++---------------------------+
+| Central Windows PC        |
+| Sinatra Web App           |
+| SQLite / SQL Database     |
++---------------------------+
+      /     /      \     \
+     /     /        \     \
+    v     v          v     v
+
+[Scan Station 1]
+[Scan Station 2]
+[Scan Station 3]
+...
+[Scan Station 10]
