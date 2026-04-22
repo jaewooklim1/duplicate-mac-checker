@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Packing Checker</title>
+  <style>
+    body {
+      font-family: Arial;
+      text-align: center;
+      background: #f8fafc;
+    }
+
+    h1 {
+      margin-top: 20px;
+    }
+
+    input {
+      padding: 14px;
+      font-size: 24px;
+      border-radius: 8px;
+      border: 2px solid #d1d5db;
+    }
+
+    #result {
+      margin-top: 40px;
+      font-size: 60px;
+      font-weight: bold;
+      padding: 40px;
+      border-radius: 10px;
+    }
+
+    .good {
+      background: #34c759;
+      color: black;
+    }
+
+    .bad {
+      background: #ff3b30;
+      color: black;
+    }
+
+    #last-scan {
+      font-size: 50px;
+      margin-top: 25px;
+      font-weight: bold;
+    }
+
+    #result {
+      width: 1000px;
+      display: grid;
+      margin: 0 auto;
+      margin-top: 30px;
+      border: 2px solid #d1d5db;
+      border-radius: 8px;
+    }
+
+    #separator {
+      width: 1000px;
+      height: 2px;
+      background-color: #999;
+      margin: 20px auto;
+    }
+
+  </style>
+</head>
+<body>
+
+  <audio id="successSound" src="/sounds/success-chime.mp3" preload="auto"></audio>
+  <audio id="errorSound" src="/sounds/warning.mp3" preload="auto"></audio>
+
+  <h1>PACKING CHECKER</h1>
+
+  <div style="margin-bottom:20px;">
+    <div style="font-weight:bold; font-size:20px">Worker Name</div>
+    <input id="workerName" placeholder="Enter your name" style="font-size:20px; padding:8px;">
+  </div>
+
+  <input id="scan" autofocus placeholder="Scan here..." />
+  <div id="separator"></div>
+  <div id="last-scan">Last scan:</div>
+
+  <div id="history-box" style="margin: 30px auto 0; width: 700px; max-width: 90%; text-align: left; background: #ddd; border-radius: 12px; padding: 20px; box-sizing: border-box;">
+    <h3 style="margin-top: 0;">Last 10 Scanned Tags</h3>
+    <ul id="history-list" style="margin: 0; padding-left: 22px;">
+      <li>Loading...</li>
+    </ul>
+  </div>
+
+  <div id="result">READY</div>
+
+  <script>
+    const input = document.getElementById('scan');
+    const resultDiv = document.getElementById('result');
+    const lastScanDiv = document.getElementById('last-scan');
+    const historyList = document.getElementById('history-list');
+    const workerInput = document.getElementById('workerName');
+    const successSound = document.getElementById("successSound");
+    const errorSound = document.getElementById("errorSound");
+
+    function playSuccessSound() {
+      successSound.currentTime = 0;
+      successSound.play().catch(() => {});
+    }
+
+    function playErrorSound() {
+      errorSound.currentTime = 0;
+      errorSound.play().catch(() => {});
+    }
+
+    workerInput.value = localStorage.getItem('workerName') || '';
+
+    workerInput.addEventListener('change', () => {
+      localStorage.setItem('workerName', workerInput.value.trim());
+    });
+
+    function renderHistory(items) {
+      if (!items.length) {
+        historyList.innerHTML = '<li>No scans yet</li>';
+        return;
+      }
+
+      historyList.innerHTML = items.map(item => {
+        const isGood = item.result === 'GOOD';
+        let extraMessage = item.reason;
+
+        if (item.reason === 'ALREADY_SCANNED') {
+          const who = item.last_scanned_by || 'Unknown';
+          const when = item.last_scanned_at || 'Unknown time';
+          extraMessage = `Already scanned by ${who} at ${when}`;
+        } else if (item.reason === 'IMPORTED_LIST') {
+          extraMessage = 'Exists in imported list';
+        } else if (item.reason === 'ACCEPTED') {
+          extraMessage = 'Accepted';
+        }
+
+        return `
+          <li style="margin-bottom: 8px;">
+            <span>${item.mac}</span>
+            -
+            <strong style="color:${isGood ? 'green' : 'red'};">
+              ${item.result}
+            </strong>
+            <span style="color:#555;">
+              (${extraMessage})
+            </span>
+          </li>
+        `;
+      }).join('');
+    }
+
+    function loadHistory() {
+      fetch('/history')
+        .then(res => res.json())
+        .then(data => renderHistory(data))
+        .catch(() => {
+          historyList.innerHTML = '<li>Could not load history</li>';
+        });
+    }
+
+    input.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        const code = input.value.trim();        
+        const worker = workerInput.value.trim();
+        fetch('/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 
+          'code=' + encodeURIComponent(code) +
+          '&worker=' + encodeURIComponent(worker)
+        })
+        .then(res => res.json())
+        .then(data => {
+          lastScanDiv.textContent = 'Last scan: ' + code;
+          resultDiv.textContent = data.result;
+          resultDiv.className = data.result === 'GOOD' ? 'good' : 'bad';
+
+          if (data.result === 'GOOD') {
+            playSuccessSound();
+          } else {
+            playErrorSound();
+          }
+
+          loadHistory();
+        })
+        .catch(() => {
+          resultDiv.textContent = 'ERROR';
+          resultDiv.className = 'bad';
+        });
+
+        input.value = '';
+      }
+    });
+
+    loadHistory();
+  </script>
+
+</body>
+</html>
