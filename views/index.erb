@@ -132,7 +132,6 @@
     </div>
   </div>
 
- 
   <div id="separator"></div>
   
   <div class="scan-fields">
@@ -182,11 +181,11 @@
     function updateScanMode() {
       if (doubleModeToggle.checked) {
         physicalInput.style.display = 'block';
-        physicalInput.placeholder = 'Scan second mac here';
-        screenInput.placeholder = 'Scan first mac here';
+        physicalInput.placeholder = 'Scan Physical MAC here';
+        screenInput.placeholder = 'Scan Screen MAC here';
       } else {
         physicalInput.style.display = 'none';
-        screenInput.placeholder = 'Scan mac here';
+        screenInput.placeholder = 'Scan MAC here';
       }
     }
 
