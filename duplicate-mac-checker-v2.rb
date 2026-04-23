@@ -29,6 +29,13 @@ get '/' do
 end
 
 get '/history' do
+  worker = params[:worker].to_s.strip.upcase
+
+  if worker.empty?
+    content_type :json
+    return [].to_json
+  end
+
   rows = db_client.execute(<<~SQL).each(as: :hash).to_a
     SELECT TOP 10
       sl.mac,
@@ -40,6 +47,7 @@ get '/history' do
     FROM scan_log sl
     LEFT JOIN known_macs km
       ON sl.mac = km.mac
+    WHERE sl.worker = '#{worker.gsub("'", "''")}'
     ORDER BY sl.id DESC
   SQL
 
@@ -65,7 +73,10 @@ post '/scan' do
   end
 
   existing = db_client.execute(<<~SQL).first
-    SELECT TOP 1 source_type
+    SELECT TOP 1
+      source_type,
+      first_scanned_by,
+      created_at
     FROM known_macs
     WHERE mac = '#{code.gsub("'", "''")}'
   SQL
