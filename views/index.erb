@@ -101,6 +101,14 @@
       padding: 10px;
     }
 
+    .double-single-toggle {
+      position: absolute;
+      left: -200px;
+      top: 8px;
+      display: flex;
+      align-items: center;
+    }
+
       </style>
     </head>
   <body>
@@ -110,6 +118,12 @@
   <audio id="successSuccessSound" src="/sounds/success_success.mp3" preload="auto"></audio>
 
   <div class="top-bar">
+    <div class="double-single-toggle">
+      <label style="font-size: 22px; font-weight: bold; align-content: left">
+        <input type="checkbox" id="doubleModeToggle" />
+        Double Scan Mode
+      </label>
+    </div>
     <h1>DUPLICATE MAC CHECKER</h1>
 
     <div class="name-field">
@@ -148,6 +162,7 @@
     const successSound = document.getElementById("successSound");
     const errorSound = document.getElementById("errorSound");
     const successSuccessSound = document.getElementById("successSuccessSound");
+    const doubleModeToggle = document.getElementById('doubleModeToggle');
 
     function playSuccessSound() {
       successSound.currentTime = 0;
@@ -163,6 +178,57 @@
       successSuccessSound.currentTime = 0;
       successSuccessSound.play().catch(() => {});
     }
+
+    function updateScanMode() {
+      if (doubleModeToggle.checked) {
+        physicalInput.style.display = 'block';
+        physicalInput.placeholder = 'Scan second mac here';
+        screenInput.placeholder = 'Scan first mac here';
+      } else {
+        physicalInput.style.display = 'none';
+        screenInput.placeholder = 'Scan mac here';
+      }
+    }
+
+    function processSingleScan() {
+      const code = normalizeMac(screenInput.value);
+      const worker = workerInput.value.trim();
+
+      if (!code) return;
+
+      fetch('/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:
+          'code=' + encodeURIComponent(code) +
+          '&worker=' + encodeURIComponent(worker)
+      })
+        .then(res => res.json())
+        .then(data => {
+          lastScanDiv.textContent = 'Last scan: ' + code;
+          resultDiv.textContent = data.result;
+          resultDiv.className = data.result === 'GOOD' ? 'good' : 'bad';
+
+          if (data.result === 'GOOD') {
+            playSuccessSuccessSound();
+          } else {
+            playErrorSound();
+          }
+
+          loadHistory();
+          resetScanInputs();
+        })
+        .catch((err) => {
+          console.error('SCAN ERROR:', err);
+          resultDiv.textContent = 'ERROR';
+          resultDiv.className = 'bad';
+          playErrorSound();
+          resetScanInputs();
+        });
+    }
+
+    doubleModeToggle.addEventListener('change', updateScanMode);
+    updateScanMode();
 
     workerInput.value = localStorage.getItem('workerName') || '';    
 
@@ -284,8 +350,13 @@
   screenInput.addEventListener('keypress', function(e) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      playSuccessSound();      // first scan captured
-      physicalInput.focus();
+
+      if (doubleModeToggle.checked) {
+        playSuccessSound();
+        physicalInput.focus();
+      } else {
+        processSingleScan();
+      }
     }
   });
 
