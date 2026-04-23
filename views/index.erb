@@ -109,6 +109,46 @@
       align-items: center;
     }
 
+    .pending {
+      background: #facc15;
+      color: black;
+    }
+
+    .help-tooltip {
+      position: absolute;
+      left: 20px;
+      top: 20px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      color: #2563eb;
+    }
+
+    .tooltip-text {
+      visibility: hidden;
+      opacity: 0;
+      width: 320px;
+      background: #111827;
+      color: white;
+      text-align: left;
+      padding: 12px;
+      border-radius: 8px;
+
+      position: absolute;
+      top: 30px;
+      left: 0;
+      z-index: 999;
+
+      transition: opacity 0.2s ease;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    .help-tooltip:hover .tooltip-text {
+      visibility: visible;
+      opacity: 1;
+    }
+
       </style>
     </head>
   <body>
@@ -147,6 +187,25 @@
     <ul id="history-list" style="margin: 0; padding-left: 22px;">
       <li>Loading...</li>
     </ul>
+  </div>
+
+  <div class="help-tooltip">
+    Help
+    <span class="tooltip-text">
+      Please sign in with your name on the top.<br>
+
+      Single Scan Mode: Scan one <span style="font-weight: bolder;">MAC</span> and submit.<br><br>
+      Double Scan Mode: Scan first <span style="font-weight: bolder;">MAC</span> which is on screen, then second matching <span style="font-weight: bolder;">MAC</span> on the tag itself.<br><br>
+      
+      If they are the same, then the program will check to see if it exists in the database.
+      If not, it will say <span style="color: green;">GOOD</span> and write that <span style="font-weight: bolder;">MAC</span> to the database.<br><br>
+
+      If they are the same but that <span style="font-weight: bolder;">MAC</span> exists in the database because it matches, then it will say <span style="color: red;">BAD</span>. Please separate those tags into another bin.<br><br>
+
+      If the Screen <span style="font-weight: bolder;">MAC</span> and Physical <span style="font-weight: bolder;">MAC</span> do NOT match, then the program will say that there is a <span style="color: red;">MISMATCH</span>. Please separate those tags into another bin.<br><br>
+
+      The history box will give you the last 10 scanned tags by you. 
+    </span>
   </div>
 
   <div id="result">READY</div>
@@ -251,7 +310,7 @@
           const when = item.last_scanned_at || 'Unknown time';
           extraMessage = `Already scanned by ${who} at ${when}`;
         } else if (item.reason === 'IMPORTED_LIST') {
-          extraMessage = 'Exists in imported list';
+          extraMessage = 'Exists in Master MAC list';
         } else if (item.reason === 'ACCEPTED') {
           extraMessage = 'Accepted';
         }
@@ -351,6 +410,16 @@
       e.preventDefault();
 
       if (doubleModeToggle.checked) {
+        const firstCode = normalizeMac(screenInput.value);
+
+        if (!firstCode) return;
+
+        resultDiv.innerHTML = `
+          <div>1ST SCAN RECORDED</div>
+          <div style="font-size:26px; margin-top:12px;">Awaiting 2nd scan...</div>
+        `;
+        resultDiv.className = 'pending';
+
         playSuccessSound();
         physicalInput.focus();
       } else {
