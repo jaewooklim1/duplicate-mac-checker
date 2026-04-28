@@ -101,12 +101,14 @@
       padding: 10px;
     }
 
-    .double-single-toggle {
+    .buttons {
       position: absolute;
       left: -200px;
       top: 8px;
       display: flex;
-      align-items: center;
+      flex-direction: column;  
+      align-items: flex-start; 
+      gap: 6px;   
     }
 
     .pending {
@@ -158,12 +160,20 @@
   <audio id="successSuccessSound" src="/sounds/success_success.mp3" preload="auto"></audio>
 
   <div class="top-bar">
-    <div class="double-single-toggle">
-      <label style="font-size: 22px; font-weight: bold; align-content: left">
-        <input type="checkbox" id="doubleModeToggle" />
-        Double Scan Mode
-      </label>
-    </div>
+    <div class="buttons">
+      <div class="double-single-toggle"> 
+        <label style="font-size: 22px; font-weight: bold; align-content: left">
+          <input type="checkbox" id="doubleModeToggle" />
+          Double Scan Mode
+        </label>
+      </div>
+      <div class="validation-toggle">
+        <label style="font-size: 22px; font-weight: bold; align-content: left">
+          <input type="checkbox" id="validationModeToggle" />
+          Validation Mode
+        </label>
+      </div>
+    </div>  
     <h1>DUPLICATE MAC CHECKER</h1>
 
     <div class="name-field">
@@ -221,6 +231,7 @@
     const errorSound = document.getElementById("errorSound");
     const successSuccessSound = document.getElementById("successSuccessSound");
     const doubleModeToggle = document.getElementById('doubleModeToggle');
+    const validationModeToggle = document.getElementById('validationModeToggle');
 
     function playSuccessSound() {
       successSound.currentTime = 0;
@@ -246,6 +257,10 @@
         physicalInput.style.display = 'none';
         screenInput.placeholder = 'Scan MAC here';
       }
+    }
+
+    function isValidMac(code) {
+      return code.length === 12;
     }
 
     function processSingleScan() {
@@ -363,6 +378,15 @@
       const physicalCode = normalizeMac(physicalInput.value);
       const worker = workerInput.value.trim();
 
+      if (validationModeToggle.checked && !isValidMac(physicalCode)) {
+          lastScanDiv.textContent = 'Last scan: ' + physicalCode;
+          resultDiv.textContent = 'PHYSICAL MAC: INVALID LENGTH';
+          resultDiv.className = 'bad';
+          playErrorSound();
+          resetScanInputs();
+          return; 
+      }
+
       if (!screenCode || !physicalCode) return;
 
       if (screenCode !== physicalCode) {
@@ -413,6 +437,15 @@
         const firstCode = normalizeMac(screenInput.value);
 
         if (!firstCode) return;
+        
+        if (validationModeToggle.checked && !isValidMac(firstCode)) {
+          lastScanDiv.textContent = 'Last scan: ' + firstCode;
+          resultDiv.textContent = 'SCREEN MAC: INVALID LENGTH';
+          resultDiv.className = 'bad';
+          playErrorSound();
+          resetScanInputs();
+          return; 
+        }        
 
         resultDiv.innerHTML = `
           <div>1ST SCAN RECORDED</div>
