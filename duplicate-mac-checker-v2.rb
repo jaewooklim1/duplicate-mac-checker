@@ -147,3 +147,145 @@ post '/scan' do
     }.to_json
   end
 end
+
+post '/scan_pair' do
+  content_type :json
+
+  first_mac = normalize_code(params[:first_mac])
+  second_mac = normalize_code(params[:second_mac])
+  worker = params[:worker].to_s.strip
+  station = params[:station].to_s.strip
+
+  def sql_safe(value)
+    value.to_s.gsub("'", "''")
+  end
+
+  def valid_mac?(mac)
+    mac.length == 12
+  end
+
+  def mac_exists?(mac)
+    db_client.execute(<<~SQL).first
+      SELECT TOP 1 source_type
+      FROM known_macs
+      WHERE mac = '#{sql_safe(mac)}'
+    SQL
+  end
+
+  first_valid = valid_mac?(first_mac)
+  second_valid = valid_mac?(second_mac)
+
+  first_exists = first_valid ? mac_exists?(first_mac) : true
+  second_exists = second_valid ? mac_exists?(second_mac) : true
+
+  first_good = first_valid && !first_exists
+  second_good = second_valid && !second_exists
+
+  match = first_mac == second_mac
+
+  first_result = first_good ? 'GOOD' : 'NOT GOOD'
+  second_result = second_good ? 'GOOD' : 'NOT GOOD'
+
+  first_reason =
+    if !first_valid
+      'INVALID_LENGTH'
+    elsif first_exists
+      first_exists['source_type'] == 'IMPORTED' ? 'IMPORTED_LIST' : 'ALREADY_SCANNED'
+    else
+      'UNIQUE'
+    end
+
+  second_reason =
+    if !second_valid
+      'INVALID_LENGTH'
+    elsif second_exists
+      second_exists['source_type'] == 'IMPORTED' ? 'IMPORTED_LIST' : 'ALREADY_SCANNED'
+    elsif match
+      'UNIQUE + MATCH'
+    else
+      'UNIQUE + MISMATCH'
+    end
+
+  # Write both scans to scan_log
+  db_client.execute(<<~SQL).do
+    INSERT INTO scan_log (mac, worker, station, result, reason)
+    VALUES (
+      '#{sql_safe(first_mac)}',
+      '#{sql_safe(worker)}',
+      '#{sql_safe(station)}',
+      '#{first_result}',
+      '#{first_reason}'
+    )
+  SQL
+
+  db_client.execute(<<~SQL).do
+    INSERT INTO scan_log (mac, worker, station, result, reason)
+    VALUES (
+      '#{sql_safe(second_mac)}',
+      '#{sql_safe(worker)}',
+      '#{sql_safe(station)}',
+      '#{second_result}',
+      '#{second_reason}'
+    )
+  SQL
+
+  # Write to known_macs based on your table
+  if match
+    if first_good && second_good
+      db_client.execute(<<~SQL).do
+        INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
+        VALUES (
+          '#{sql_safe(first_mac)}',
+          'SCANNED',
+          '#{sql_safe(worker)}',
+          '#{sql_safe(station)}'
+        )
+      SQL
+    end
+  else
+    if first_good
+      db_client.execute(<<~SQL).do
+        INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
+        VALUES (
+          '#{sql_safe(first_mac)}',
+          'SCANNED',
+          '#{sql_safe(worker)}',
+          '#{sql_safe(station)}'
+        )
+      SQL
+    end
+
+    if second_good
+      db_client.execute(<<~SQL).do
+        INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
+        VALUES (
+          '#{sql_safe(second_mac)}',
+          'SCANNED',
+          '#{sql_safe(worker)}',
+          '#{sql_safe(station)}'
+        )
+      SQL
+    end
+  end
+
+  final_result = first_good && second_good && match ? 'GOOD' : 'NOT GOOD'
+  final_reason =
+    if match && first_good && second_good
+      'ACCEPTED_MATCH'
+    elsif match
+      'MATCH BUT BOTH BAD'
+    else
+      'MISMATCH'
+    end
+
+  {
+    result: final_result,
+    reason: final_reason,
+    first_mac: first_mac,
+    second_mac: second_mac,
+    first_result: first_result,
+    second_result: second_result,
+    first_reason: first_reason,
+    second_reason: second_reason
+  }.to_json
+end

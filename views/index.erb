@@ -389,26 +389,18 @@
 
       if (!screenCode || !physicalCode) return;
 
-      if (screenCode !== physicalCode) {
-        lastScanDiv.textContent = 'Last scan: ' + screenCode + ' / ' + physicalCode;
-        resultDiv.textContent = 'MISMATCH';
-        resultDiv.className = 'bad';
-        playErrorSound();
-        resetScanInputs();
-        return;
-      }
-
-      fetch('/scan', {
+      fetch('/scan_pair', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body:
-          'code=' + encodeURIComponent(screenCode) +
+          'first_mac=' + encodeURIComponent(screenCode) +
+          '&second_mac=' + encodeURIComponent(physicalCode) +
           '&worker=' + encodeURIComponent(worker)
       })
         .then(res => res.json())
         .then(data => {
-          lastScanDiv.textContent = 'Last scan: ' + screenCode;
-          resultDiv.textContent = data.result;
+          lastScanDiv.textContent = 'Last scan: ' + screenCode + ' / ' + physicalCode;
+          resultDiv.textContent = data.result + ' - ' + data.reason;
           resultDiv.className = data.result === 'GOOD' ? 'good' : 'bad';
 
           if (data.result === 'GOOD') {
