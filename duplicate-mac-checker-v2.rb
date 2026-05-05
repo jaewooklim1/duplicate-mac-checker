@@ -5,13 +5,13 @@ require 'pg'
 set :bind, '0.0.0.0'
 set :port, 4567
 
-def db_client
-  @db_client ||= PG.connect(
-    host: '127.0.0.1',
-    port: 5432,
-    dbname: 'duplicate_mac_checker',
-    user: 'ruby',
-    password: 'ruby'
+def db
+  @db ||= PG.connect(
+    host: ENV.fetch('DB_HOST', 'host.docker.internal'),
+    port: ENV.fetch('DB_PORT', 5432),
+    dbname: ENV.fetch('DB_NAME', 'DuplicateMacChecker'),
+    user: ENV.fetch('DB_USER', 'postgres'),
+    password: ENV.fetch('DB_PASSWORD')
   )
 end
 
