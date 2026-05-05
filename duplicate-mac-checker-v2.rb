@@ -1,27 +1,129 @@
 require 'sinatra'
 require 'json'
-require 'tiny_tds'
+require 'pg'
 
 set :bind, '0.0.0.0'
 set :port, 4567
 
 def db_client
-  @db_client ||= TinyTds::Client.new(
-    host: 'localhost',
-    database: 'DuplicateMacChecker',
-    trusted_connection: true
+  @db_client ||= PG.connect(
+    host: '127.0.0.1',
+    port: 5432,
+    dbname: 'duplicate_mac_checker',
+    user: 'ruby',
+    password: 'ruby'
   )
 end
 
 begin
-  row = db_client.execute("SELECT DB_NAME() AS db_name").first
+  row = db_client.exec("SELECT current_database() AS db_name").first
   puts "Connected to database: #{row['db_name']}"
 rescue => e
   puts "DATABASE CONNECTION FAILED: #{e.class} - #{e.message}"
 end
 
 def normalize_code(code)
-  code.to_s.strip.upcase
+  code.to_s.strip.upcase.gsub(/[^A-Z0-9]/, '')
+end
+
+def valid_mac?(mac)
+  mac.length == 12
+end
+
+def imported_mac?(mac)
+  return false unless valid_mac?(mac)
+
+  row = db_client.exec_params(
+    "SELECT 1 FROM master_mac_list_chicago WHERE mac = $1 AND UPPER(TRIM(tag_type)) = 'IMPORTED' LIMIT 1",
+    [mac]
+  ).first
+
+  !!row
+end
+
+def scanned_master_mac?(mac)
+  return false unless valid_mac?(mac)
+
+  row = db_client.exec_params(
+    "SELECT 1 FROM master_mac_list_chicago WHERE mac = $1 AND UPPER(TRIM(tag_type)) = 'SCANNED' LIMIT 1",
+    [mac]
+  ).first
+
+  !!row
+end
+
+def scanned_before?(mac)
+  return false unless valid_mac?(mac)
+
+  row = db_client.exec_params(
+    "SELECT 1 FROM scan_log_chicago WHERE screen_mac = $1 OR physical_mac = $1 LIMIT 1",
+    [mac]
+  ).first
+
+  !!row
+end
+
+def exists_in_master?(mac)
+  return false unless valid_mac?(mac)
+
+  row = db_client.exec_params(
+    "SELECT 1 FROM master_mac_list_chicago WHERE mac = $1 LIMIT 1",
+    [mac]
+  ).first
+
+  !!row
+end
+
+def insert_master_mac(mac, worker)
+  db_client.exec_params(
+    "INSERT INTO master_mac_list_chicago (mac, tag_type, first_scanned_by, created_at)
+     VALUES ($1, 'SCANNED', $2, NOW())
+     ON CONFLICT (mac) DO NOTHING",
+    [mac, worker]
+  )
+end
+
+def insert_scan_log_chicago(
+  screen_mac,
+  physical_mac,
+  worker,
+  macs_match,
+  result,
+  box,
+  screen_imported,
+  physical_imported,
+  screen_scanned_before,
+  physical_scanned_before
+)
+  db_client.exec_params(
+    "INSERT INTO scan_log_chicago
+      (
+        screen_mac,
+        physical_mac,
+        macs_match,
+        worker,
+        result,
+        box,
+        screen_imported,
+        physical_imported,
+        screen_scanned_before,
+        physical_scanned_before
+      )
+     VALUES
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+    [
+      screen_mac,
+      physical_mac,
+      macs_match,
+      worker,
+      result,
+      box,
+      screen_imported,
+      physical_imported,
+      screen_scanned_before,
+      physical_scanned_before
+    ]
+  )
 end
 
 get '/' do
@@ -29,263 +131,135 @@ get '/' do
 end
 
 get '/history' do
-  worker = params[:worker].to_s.strip.upcase
-
-  if worker.empty?
-    content_type :json
-    return [].to_json
-  end
-
-  rows = db_client.execute(<<~SQL).each(as: :hash).to_a
-    SELECT TOP 10
-      sl.mac,
-      sl.result,
-      sl.reason,
-      sl.scanned_at,
-      km.first_scanned_by AS last_scanned_by,
-      km.created_at AS last_scanned_at
-    FROM scan_log sl
-    LEFT JOIN known_macs km
-      ON sl.mac = km.mac
-    WHERE sl.worker = '#{worker.gsub("'", "''")}'
-    ORDER BY sl.id DESC
-  SQL
-
-  content_type :json
-  rows.to_json
-end
-
-post '/scan' do
   content_type :json
 
-  puts "SCAN HIT: #{params.inspect}"
-
-  code = normalize_code(params[:code])
   worker = params[:worker].to_s.strip
-  station = params[:station].to_s.strip
+  return [].to_json if worker.empty?
 
-  if code.empty?
-    status 400
-    return {
-      result: 'NOT GOOD',
-      reason: 'EMPTY_CODE'
-    }.to_json
-  end
-
-  existing = db_client.execute(<<~SQL).first
-    SELECT TOP 1
-      source_type,
-      first_scanned_by,
-      created_at
-    FROM known_macs
-    WHERE mac = '#{code.gsub("'", "''")}'
+  rows = db_client.exec_params(<<~SQL, [worker]).to_a
+    SELECT
+      screen_mac,
+      physical_mac,
+      result,
+      box,
+      scanned_at
+    FROM scan_log_chicago
+    WHERE worker = $1
+    ORDER BY id DESC
+    LIMIT 10
   SQL
 
-  if existing
-    reason = existing['source_type'] == 'IMPORTED' ? 'IMPORTED_LIST' : 'ALREADY_SCANNED'
-
-    db_client.execute(<<~SQL).do
-      INSERT INTO scan_log (mac, worker, station, result, reason)
-      VALUES (
-        '#{code.gsub("'", "''")}',
-        '#{worker.gsub("'", "''")}',
-        '#{station.gsub("'", "''")}',
-        'NOT GOOD',
-        '#{reason}'
-      )
-    SQL
-
-     return {
-        result: 'NOT GOOD',
-        reason: reason,
-        last_scanned_by: existing['first_scanned_by'],
-        last_scanned_at: existing['created_at']
-      }.to_json
-  end
-
-  begin
-    db_client.execute(<<~SQL).do
-      INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
-      VALUES (
-        '#{code.gsub("'", "''")}',
-        'SCANNED',
-        '#{worker.gsub("'", "''")}',
-        '#{station.gsub("'", "''")}'
-      )
-    SQL
-
-    db_client.execute(<<~SQL).do
-      INSERT INTO scan_log (mac, worker, station, result, reason)
-      VALUES (
-        '#{code.gsub("'", "''")}',
-        '#{worker.gsub("'", "''")}',
-        '#{station.gsub("'", "''")}',
-        'GOOD',
-        'ACCEPTED'
-      )
-    SQL
-
-    {
-      result: 'GOOD',
-      reason: 'ACCEPTED'
-    }.to_json
-  rescue TinyTds::Error
-    db_client.execute(<<~SQL).do
-      INSERT INTO scan_log (mac, worker, station, result, reason)
-      VALUES (
-        '#{code.gsub("'", "''")}',
-        '#{worker.gsub("'", "''")}',
-        '#{station.gsub("'", "''")}',
-        'NOT GOOD',
-        'ALREADY_SCANNED'
-      )
-    SQL
-
-    {
-      result: 'NOT GOOD',
-      reason: 'ALREADY_SCANNED'
-    }.to_json
-  end
+  rows.to_json
 end
 
 post '/scan_pair' do
   content_type :json
 
-  first_mac = normalize_code(params[:first_mac])
-  second_mac = normalize_code(params[:second_mac])
+  screen_mac = normalize_code(params[:first_mac])
+  physical_mac = normalize_code(params[:second_mac])
   worker = params[:worker].to_s.strip
-  station = params[:station].to_s.strip
 
-  def sql_safe(value)
-    value.to_s.gsub("'", "''")
-  end
-
-  def valid_mac?(mac)
-    mac.length == 12
-  end
-
-  def mac_exists?(mac)
-    db_client.execute(<<~SQL).first
-      SELECT TOP 1 source_type
-      FROM known_macs
-      WHERE mac = '#{sql_safe(mac)}'
-    SQL
-  end
-
-  first_valid = valid_mac?(first_mac)
-  second_valid = valid_mac?(second_mac)
-
-  first_exists = first_valid ? mac_exists?(first_mac) : true
-  second_exists = second_valid ? mac_exists?(second_mac) : true
-
-  first_good = first_valid && !first_exists
-  second_good = second_valid && !second_exists
-
-  match = first_mac == second_mac
-
-  first_result = first_good ? 'GOOD' : 'NOT GOOD'
-  second_result = second_good ? 'GOOD' : 'NOT GOOD'
-
-  first_reason =
-    if !first_valid
-      'INVALID_LENGTH'
-    elsif first_exists
-      first_exists['source_type'] == 'IMPORTED' ? 'IMPORTED_LIST' : 'ALREADY_SCANNED'
-    else
-      'UNIQUE'
-    end
-
-  second_reason =
-    if !second_valid
-      'INVALID_LENGTH'
-    elsif second_exists
-      second_exists['source_type'] == 'IMPORTED' ? 'IMPORTED_LIST' : 'ALREADY_SCANNED'
-    elsif match
-      'UNIQUE + MATCH'
-    else
-      'UNIQUE + MISMATCH'
-    end
-
-  # Write both scans to scan_log
-  db_client.execute(<<~SQL).do
-    INSERT INTO scan_log (mac, worker, station, result, reason)
-    VALUES (
-      '#{sql_safe(first_mac)}',
-      '#{sql_safe(worker)}',
-      '#{sql_safe(station)}',
-      '#{first_result}',
-      '#{first_reason}'
+  unless valid_mac?(screen_mac)
+    insert_scan_log_chicago(
+      screen_mac,
+      physical_mac,
+      worker,
+      screen_mac == physical_mac,
+      'SCREEN_MAC_INVALID_LENGTH',
+      'BOX_REVIEW',
+      false,
+      false,
+      false,
+      false
     )
-  SQL
 
-  db_client.execute(<<~SQL).do
-    INSERT INTO scan_log (mac, worker, station, result, reason)
-    VALUES (
-      '#{sql_safe(second_mac)}',
-      '#{sql_safe(worker)}',
-      '#{sql_safe(station)}',
-      '#{second_result}',
-      '#{second_reason}'
-    )
-  SQL
-
-  # Write to known_macs based on your table
-  if match
-    if first_good && second_good
-      db_client.execute(<<~SQL).do
-        INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
-        VALUES (
-          '#{sql_safe(first_mac)}',
-          'SCANNED',
-          '#{sql_safe(worker)}',
-          '#{sql_safe(station)}'
-        )
-      SQL
-    end
-  else
-    if first_good
-      db_client.execute(<<~SQL).do
-        INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
-        VALUES (
-          '#{sql_safe(first_mac)}',
-          'SCANNED',
-          '#{sql_safe(worker)}',
-          '#{sql_safe(station)}'
-        )
-      SQL
-    end
-
-    if second_good
-      db_client.execute(<<~SQL).do
-        INSERT INTO known_macs (mac, source_type, first_scanned_by, first_station)
-        VALUES (
-          '#{sql_safe(second_mac)}',
-          'SCANNED',
-          '#{sql_safe(worker)}',
-          '#{sql_safe(station)}'
-        )
-      SQL
-    end
+    return {
+      result: 'SCREEN_MAC_INVALID_LENGTH',
+      screen_mac: screen_mac,
+      physical_mac: physical_mac
+    }.to_json
   end
 
-  final_result = first_good && second_good && match ? 'GOOD' : 'NOT GOOD'
-  final_reason =
-    if match && first_good && second_good
-      'ACCEPTED_MATCH'
-    elsif match
-      'MATCH BUT BOTH BAD'
+  unless valid_mac?(physical_mac)
+    insert_scan_log_chicago(
+      screen_mac,
+      physical_mac,
+      worker,
+      screen_mac == physical_mac,
+      'PHYSICAL_MAC_INVALID_LENGTH',
+      'BOX_REVIEW',
+      false,
+      false,
+      false,
+      false
+    )
+
+    return {
+      result: 'PHYSICAL_MAC_INVALID_LENGTH',
+      screen_mac: screen_mac,
+      physical_mac: physical_mac
+    }.to_json
+  end
+
+  match = screen_mac == physical_mac
+
+  screen_imported = imported_mac?(screen_mac)
+  physical_imported = imported_mac?(physical_mac)
+
+  screen_scanned_master = scanned_master_mac?(screen_mac)
+  physical_scanned_master = scanned_master_mac?(physical_mac)
+
+  screen_scanned_before = scanned_before?(screen_mac)
+  physical_scanned_before = scanned_before?(physical_mac)
+
+  result =
+    if match && screen_imported && screen_scanned_before
+      'SCENARIO_2_DUPLICATED_IMPORTED_MAC'
+    elsif match && screen_imported
+      'SCENARIO_1_IMPORTED_MATCH'
+    elsif !match && (screen_imported || physical_imported)
+      'SCENARIO_3_MISMATCH_WITH_IMPORTED_MAC'
+    elsif match && screen_scanned_before
+      'SCENARIO_4_DUPLICATED_SCANNED_MAC'
+    elsif !match
+      'SCENARIO_5_NEW_MISMATCH'
     else
-      'MISMATCH'
+      'GOOD_TAG'
     end
+
+  box =
+    case result
+    when 'SCENARIO_1_IMPORTED_MATCH' then 'BOX_1'
+    when 'SCENARIO_2_DUPLICATED_IMPORTED_MAC' then 'BOX_2'
+    when 'SCENARIO_3_MISMATCH_WITH_IMPORTED_MAC' then 'BOX_3'
+    when 'SCENARIO_4_DUPLICATED_SCANNED_MAC' then 'BOX_4'
+    when 'SCENARIO_5_NEW_MISMATCH' then 'BOX_5'
+    when 'GOOD_TAG' then 'BOX_GOOD'
+    else 'BOX_REVIEW'
+    end
+
+  if result == 'GOOD_TAG'
+    insert_master_mac(screen_mac, worker)
+    insert_master_mac(physical_mac, worker)
+  end
+
+  insert_scan_log_chicago(
+    screen_mac,
+    physical_mac,
+    worker,
+    match,
+    result,
+    box,
+    screen_imported,
+    physical_imported,
+    screen_scanned_before,
+    physical_scanned_before
+  )
 
   {
-    result: final_result,
-    reason: final_reason,
-    first_mac: first_mac,
-    second_mac: second_mac,
-    first_result: first_result,
-    second_result: second_result,
-    first_reason: first_reason,
-    second_reason: second_reason
+    result: result,
+    box: box,
+    screen_mac: screen_mac,
+    physical_mac: physical_mac
   }.to_json
 end

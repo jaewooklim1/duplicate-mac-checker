@@ -317,22 +317,20 @@
       }
 
       historyList.innerHTML = items.map(item => {
-        const isGood = item.result === 'GOOD';
-        let extraMessage = item.reason;
+        const isGood = item.result === 'GOOD_TAG';
+        const resultLabels = {
+          SCENARIO_1_IMPORTED_MATCH: 'Scenario 1 - Imported Match',
+          SCENARIO_2_DUPLICATED_IMPORTED_MAC: 'Scenario 2 - Duplicate Imported',
+          SCENARIO_3_MISMATCH_WITH_IMPORTED_MAC: 'Scenario 3 - Mismatch Imported',
+          SCENARIO_4_DUPLICATED_SCANNED_MAC: 'Scenario 4 - Duplicate Scanned',
+          SCENARIO_5_NEW_MISMATCH: 'Scenario 5 - New Mismatch',
+          ACCEPTED_NEW_MATCH: 'Good - New Match'
+        };
 
-        if (item.reason === 'ALREADY_SCANNED') {
-          const who = item.last_scanned_by || 'Unknown';
-          const when = item.last_scanned_at || 'Unknown time';
-          extraMessage = `Already scanned by ${who} at ${when}`;
-        } else if (item.reason === 'IMPORTED_LIST') {
-          extraMessage = 'Exists in Master MAC list';
-        } else if (item.reason === 'ACCEPTED') {
-          extraMessage = 'Accepted';
-        }
-
+        let extraMessage = resultLabels[item.result] || item.result;
         return `
           <li style="margin-bottom: 8px;">
-            <span>${item.mac}</span>
+            <span>${item.physical_mac}</span>
             -
             <strong style="color:${isGood ? 'green' : 'red'};">
               ${item.result}
@@ -400,10 +398,19 @@
         .then(res => res.json())
         .then(data => {
           lastScanDiv.textContent = 'Last scan: ' + screenCode + ' / ' + physicalCode;
-          resultDiv.textContent = data.result + ' - ' + data.reason;
-          resultDiv.className = data.result === 'GOOD' ? 'good' : 'bad';
+          const resultLabels = {
+            SCENARIO_1_IMPORTED_MATCH: 'BOX 1 - IMPORTED MAC MATCH',
+            SCENARIO_2_DUPLICATED_IMPORTED_MAC: 'BOX 2 - DUPLICATED IMPORTED MAC',
+            SCENARIO_3_MISMATCH_WITH_IMPORTED_MAC: 'BOX 3 - MISMATCH WITH IMPORTED MAC',
+            SCENARIO_4_DUPLICATED_SCANNED_MAC: 'BOX 4 - DUPLICATED SCANNED MAC',
+            SCENARIO_5_NEW_MISMATCH: 'BOX 5 - NEW MISMATCH',
+            ACCEPTED_NEW_MATCH: 'GOOD - NEW MATCH'
+          };
 
-          if (data.result === 'GOOD') {
+          resultDiv.textContent = resultLabels[data.result] || data.result;
+          resultDiv.className = data.result === 'GOOD_TAG' ? 'good' : 'bad';
+
+          if (data.result === 'ACCEPTED_NEW_MATCH') {
             playSuccessSuccessSound();
           } else {
             playErrorSound();
